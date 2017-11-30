@@ -37,8 +37,8 @@
   * The number of items you wish to expect to receive.
 * MPI_INT
   * What kind of pointer or data you are receiving.
-* 0
-  * Who has sent the data to you.
+* MPI_ANY_SOURCE
+  * Who has sent the data to you, or who you are willing to take it from.
 * 99
   * The tag associated with this message, used to identify messages that are in a stream of other messages.
 * MPI_COMM_WORLD
