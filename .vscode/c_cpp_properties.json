@@ -34,7 +34,6 @@
             "browse": {
                 "path": [
                     "${workspaceRoot}"
-                    ,"/usr/include/mpich"
                 ],
                 "limitSymbolsToIncludedHeaders": true,
                 "databaseFilename": ""
