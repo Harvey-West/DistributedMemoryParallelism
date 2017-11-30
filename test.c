@@ -1,5 +1,33 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <mpi.h>
+
+/* A two dimensional array can be expressed by one dimensional malloc whose size
+is squared*/
+double **createArrayOfDoubles(int sizeOfArray)
+{
+    int rowIndex;
+    double **array = malloc(sizeOfArray * sizeof(double *));
+    for (rowIndex = 0; rowIndex < sizeOfArray; rowIndex++)
+    {
+        array[rowIndex] = malloc(sizeOfArray * sizeof(double));
+    }
+    return array;
+}
+/* Fills each index with random double from 0.0 to 1 (not inclusive).
+*/
+void populateArrayWithRandomNumbers(double **array, int sizeOfArray)
+{
+    int y, x;
+    for (y = 0; y < sizeOfArray; y++)
+    {
+        for (x = 0; x < sizeOfArray; x++)
+        {
+            double randNum = ((double)rand() / (double)RAND_MAX);
+            array[y][x] = randNum;
+        }
+    }
+}
 int main(int argc, char **argv)
 {
     int rc, myrank, nproc, namelen;

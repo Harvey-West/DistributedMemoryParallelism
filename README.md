@@ -10,6 +10,29 @@
 
 -----
 
+### Idea 1
+
+Generate the array in each core, each core works on some segment then
+passes the segment back to the main process.
+
+1. Work on segment.
+1. Barrier once done.
+1. Pass the boundary values to neighbouring processors.
+  * Send as one dimensional array?
+1. Receive boundary values from neighbouring processors.
+1. While this is going on check if is relaxed in processors calculated values.
+  * This would need the core to store the previous values in memory.
+
+### Idea 2
+
+Generate the array in the main core, then pass segments to each core. Each
+core then passes its segment back.
+
+### Idea 3
+
+One dimensional vs two dimensional?
+
+-----
 ### MPI Send
 
 ``` MPI_Send(n, 1, MPI_INT, 0, 99, MPI_COMM_WORLD); ```
