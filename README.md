@@ -2,13 +2,17 @@
 
 ## Compile
 
-        mpicc -Wall -o parallel ./parallel.c
+        mpicc -Wall -o parallel_distributed ./parallel_distributed.c
 
 ## Run
 
         mpirun -np {number of processors} ./parallel
 
 -----
+
+Each thread generates its segment of the array. Don't time it.
+
+Consider it a matter of implementation so long as it is explained in the code and essay.
 
 ### Idea 1
 
