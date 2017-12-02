@@ -2,11 +2,15 @@
 
 ## Compile
 
-        mpicc -Wall -o parallel_distributed ./parallel_distributed.c
+mpicc -Wall -o parallel_distributed ./parallel_distributed.c
 
 ## Run
 
-        mpirun -np {number of processors} ./parallel
+mpirun -np {number of processors} ./parallel_distributed
+
+mpirun -np 1 ./parallel_distributed
+
+mpirun -np 8 ./parallel_distributed
 
 -----
 

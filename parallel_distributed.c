@@ -10,26 +10,39 @@ row index.
 double **createArrayOfDoubles(int sizeOfArray)
 {
     int rowIndex;
-    double *array = malloc(sizeOfArray * sizeOfArray * sizeof(double *));
-    double **rowPointers = malloc(sizeOfArray * sizeof(double*));
+    //Initialise all values to 0
+    double *array = calloc(sizeOfArray * sizeOfArray, sizeof(double *));
+    double **rowPointers = malloc(sizeOfArray * sizeof(double *));
     for (rowIndex = 0; rowIndex < sizeOfArray; rowIndex++)
     {
-        rowPointers[rowIndex] = &array[rowIndex*sizeOfArray];
+        rowPointers[rowIndex] = &array[rowIndex * sizeOfArray];
     }
     return rowPointers;
 }
 /* Fills each index with random double from 0.0 to 1 (not inclusive).
 */
-void populateBoundaryValues(double **array, int sizeOfArray)
+void populateBoundaryValues(double **array, int sizeOfArray, int startYIndex,
+                            int endYIndex)
 {
-    int y, x;
+    int y, x, endXIndex = sizeOfArray - 1;
 
-    for (y = 0; y < sizeOfArray; y++)
+    for (y = startYIndex; y <= endYIndex; y++)
     {
-        for (x = 0; x < sizeOfArray; x++)
+        array[y][0] = 1.0;
+        array[y][endXIndex] = 1.0;
+    }
+    if (startYIndex == 0)
+    {
+        for (x = 1; x < endXIndex; x++)
         {
-            double randNum = ((double)rand() / (double)RAND_MAX);
-            array[y][x] = randNum;
+            array[0][x] = 1.0;
+        }
+    }
+    if (endYIndex == endXIndex)
+    {
+        for (x = 1; x < endXIndex; x++)
+        {
+            array[endYIndex][x] = 1.0;
         }
     }
 }
@@ -48,9 +61,13 @@ void printArray(double **array, int sizeOfArray)
 }
 int main(int argc, char **argv)
 {
+    int sizeOfRow = strtol(argv[1], NULL, 10),
+        numberOfThreads = strtol(argv[2], NULL, 10),
+        countOfPasses = 0;
+    double userPrecision;
+    sscanf(argv[3], "%lf", &userPrecision);
     int rc, myrank, nproc, namelen;
     char name[MPI_MAX_PROCESSOR_NAME];
-    MPI_Status stat;
     rc = MPI_Init(&argc, &argv);
     if (rc != MPI_SUCCESS)
     {
@@ -61,8 +78,9 @@ int main(int argc, char **argv)
     MPI_Comm_size(MPI_COMM_WORLD, &nproc);
     if (myrank == 0)
     {
-        MPI_Recv(n, 1, MPI_INT, MPI_ANY_SOURCE, 99, MPI_COMM_WORLD, &stat);
-        printf("Hello from 1 to 0: %d\n", *n);
+        double **array = createArrayOfDoubles(sizeOfRow);
+        populateBoundaryValues(array, sizeOfRow, 0, sizeOfRow-1);
+        printArray(array, sizeOfRow);
     }
     namelen = MPI_MAX_PROCESSOR_NAME;
     MPI_Get_processor_name(name, &namelen);
