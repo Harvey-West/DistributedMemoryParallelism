@@ -64,11 +64,26 @@ int main(int argc, char **argv)
     if (myRank == 0)
     {
         wholeArray = createArrayOfDoubles(sizeOfRow, sizeOfRow);
-        populateBoundaryValues(wholeArray, sizeOfRow, startYIndex, sizeOfRow - 1,
-                               sizeOfRow);
-        // populateBoundaryValues(wholeArray, sizeOfRow, 0, sizeOfRow - 1,
-        //    sizeOfRow);
+        populateBoundaryValues(wholeArray, sizeOfRow, startYIndex,
+                               sizeOfRow - 1, sizeOfRow);
     }
+
+    //TODO
+    /*
+    1)  Get one pass then send back to 0 working.
+    2)  Get one pass then broadcast if not relaxed, get all other threads
+        to stop printing some statement once this is done.
+    2)  Each thread performs calculation, while calculating check if not relaxed.
+        a)  If not relaxed, broadcast it is not relaxed to all other threads.
+            All threads stop checking on that number of passes if relaxed.
+    3)  Finished thread calculation and result was it was relaxed.
+        b)  If all say relaxed and finished, reduce.
+        c)  If relaxed and nearest neighbours 
+    if finish, broadcast relaxed. Every thread keeps count of number of passes.
+    When broadcasting if relaxed, make it a tuple of isRelaxed and number of 
+    passes.
+    */
+    //------------------------
 
     if (myRank == 0)
     {
@@ -84,7 +99,8 @@ int main(int argc, char **argv)
         receive from every thread. No data will overlap as each send is careful
         with what data it sends and how much.
         */
-        int threadIndex, maximumAmount = (grainSize + numberOfThreads - 1) * sizeOfRow;
+        int threadIndex,
+            maximumAmount = (grainSize+1) * sizeOfRow;
         for (threadIndex = 1; threadIndex < nproc - 1; threadIndex++)
         {
             MPI_Recv(wholeArray[threadIndex * grainSize], maximumAmount,

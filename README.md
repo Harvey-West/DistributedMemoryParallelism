@@ -41,6 +41,12 @@ core then passes its segment back.
 One dimensional vs two dimensional?
 
 -----
+### Non-Blocking Send/Receive
+
+```MPI_Isend()```
+```MPI_Irecv()```
+You must call ```MPI_Wait()``` or ```MPI_Probe()``` to see whether the communication has finished.
+
 ### MPI Send
 
 ``` MPI_Send(n, 1, MPI_INT, 0, 99, MPI_COMM_WORLD); ```
