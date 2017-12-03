@@ -8,9 +8,9 @@ mpicc -Wall -o parallel_distributed ./parallel_distributed.c
 
 mpirun -np {number of processors} ./parallel_distributed
 
-mpirun -np 1 ./parallel_distributed
+mpirun -np 1 ./parallel_distributed 10 1 0.1
 
-mpirun -np 8 ./parallel_distributed
+mpirun -np 8 ./parallel_distributed 10 8 0.1
 
 -----
 
