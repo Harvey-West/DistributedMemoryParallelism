@@ -1,36 +1,41 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <mpi.h>
+//TODO
+/*
+    1)  Get one pass then send back to 0 working.
+    2)  Get one pass then broadcast if not relaxed, get all other threads
+        to stop printing some statement once this is done -- Might not be more efficient. Do it anyway for comparison?
+    2)  Each thread performs calculation, while calculating check if not relaxed.
+        a)  If not relaxed, broadcast it is not relaxed to all other threads.
+            All threads stop checking on that number of passes if relaxed.
+    3)  Finished thread calculation and result was it was relaxed.
+        b)  If all say relaxed and finished, reduce.
+        c)  If relaxed and nearest neighbours 
+    if finish, broadcast relaxed. Every thread keeps count of number of passes.
+    When broadcasting if relaxed, make it a tuple of isRelaxed and number of 
+    passes.
+*/
 struct RelaxationVariables
 {
     int sizeOfRow, grainSize;
     double precision;
     double **originalArrayPointer, **destinationArrayPointer;
 };
-/* A two dimensional array can be expressed by one dimensional malloc whose size
-is squared.
-To enable two dimensional access, simply malloc pointers to each
-row index.
-*/
+
 double **createArrayOfDoubles(int numberOfRows, int sizeOfRow);
-/* Fills each boundary index with 1.0
-*/
 void populateBoundaryValues(double **array, int sizeOfRow, int startYIndex,
                             int lastVisibleYIndex, int numberOfVisibleRows);
-/*Returns the number of rows that a thread will work on, i.e. the grain.*/
 int getGrainSize(int sizeOfRow, int numberOfThreads, int myRank);
-/*Although a thread will work on the grain, it will need to see the boundary 
-values. This may mean seeing 1 additional row or 2. This function returns
-how many rows each thread will need to use to work*/
-int getNumberOfVisibleRows(int myRank, int grainSize, int nproc);
-
 void performRelaxation(struct RelaxationVariables);
-
 void printArray(double **array, int sizeOfRow);
 void printGrain(double **array, int offset, int grainSize, int sizeOfRow,
                 int nproc);
 void printVisibleArea(double **array, int numberOfVisibleRows, int sizeOfRow);
-
+void receiveFromAll(int grainSize, int sizeOfRow, int numberOfThreads,
+                    int remainder, int nproc, double ***wholeArray);
+void setStartAndEndYIndex(int *firstVisibleYIndex, int *lastVisibleYIndex,
+                          int remainder, int myRank, int grainSize);
 int main(int argc, char **argv)
 {
     int sizeOfRow = strtol(argv[1], NULL, 10),
@@ -54,32 +59,12 @@ int main(int argc, char **argv)
     MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 
     grainSize = getGrainSize(sizeOfRow, numberOfThreads, myRank);
-    int firstVisibleYIndex,
+    int firstVisibleYIndex = 0,
         numberOfVisibleRows = grainSize + 2,
-        lastVisibleYIndex;
-    if (remainder)
-    {
-        if (myRank > remainder)
-        {
-            firstVisibleYIndex = myRank * grainSize + remainder;
-            lastVisibleYIndex = firstVisibleYIndex + grainSize + 1;
-        }
-        else if (myRank == 0)
-        {
-            firstVisibleYIndex = myRank * grainSize;
-            lastVisibleYIndex = firstVisibleYIndex + grainSize + 1;
-        }
-        else
-        {
-            firstVisibleYIndex = myRank * grainSize - 1;
-            lastVisibleYIndex = firstVisibleYIndex + grainSize + 1;
-        }
-    }
-    else
-    {
-        firstVisibleYIndex = myRank * grainSize;
-        lastVisibleYIndex = firstVisibleYIndex + grainSize + 1;
-    }
+        lastVisibleYIndex = 0;
+
+    setStartAndEndYIndex(&firstVisibleYIndex, &lastVisibleYIndex,
+                         remainder, myRank, grainSize);
 
     double **workingArray, **destinationArray, **wholeArray, **tempPointer;
 
@@ -115,68 +100,21 @@ int main(int argc, char **argv)
         localRelaxactionVariables.destinationArrayPointer = tempPointer;
         countOfPasses++;
     }
-    //TODO
-    /*
-    1)  Get one pass then send back to 0 working.
-    2)  Get one pass then broadcast if not relaxed, get all other threads
-        to stop printing some statement once this is done -- Might not be more efficient. Do it anyway for comparison?
-    2)  Each thread performs calculation, while calculating check if not relaxed.
-        a)  If not relaxed, broadcast it is not relaxed to all other threads.
-            All threads stop checking on that number of passes if relaxed.
-    3)  Finished thread calculation and result was it was relaxed.
-        b)  If all say relaxed and finished, reduce.
-        c)  If relaxed and nearest neighbours 
-    if finish, broadcast relaxed. Every thread keeps count of number of passes.
-    When broadcasting if relaxed, make it a tuple of isRelaxed and number of 
-    passes.
-    */
     if (myRank == 0)
     {
-        int x;
+        //In some cases where the offset of trying to prevent thread 0 from
+        //getting too much work, it may have no grain to work on.
         if (grainSize > 0)
         {
+            int x;
             for (x = 0; x < sizeOfRow * grainSize; x++)
             {
                 *(wholeArray[1] + x) =
                     *(localRelaxactionVariables.originalArrayPointer[1] + x);
             }
         }
-        /*Noting that MPI_Recv asks for a number of items to receive.
-        Importantly it specifies the *maximum* number of items. As such each, if
-        carefully programmed so that no other send uses the same tag I can 
-        use a larger than actual maximum count here to encapsulate every
-        receive from every thread. No data will overlap as each send is careful
-        with what data it sends and how much.
-        */
-        int threadIndex,
-            maximumAmount = (grainSize + 1) * sizeOfRow,
-            insertYIndex,
-            localGrainSize = (sizeOfRow - 2 - remainder) / numberOfThreads;
-        ;
-        printf("reaminder %d\n", remainder);
-        for (threadIndex = 1; threadIndex < nproc; threadIndex++)
-        {
-            if (remainder)
-            {
-                //Spreads work across threads, aside from 0 as 0 does more other work.
-                if ((remainder - threadIndex) > -1)
-                {
-                    insertYIndex = threadIndex * (localGrainSize+1);
-                }
-                else
-                {
-                    insertYIndex = threadIndex * localGrainSize + 1 + remainder;
-                }
-            }
-            else
-            {
-                insertYIndex = (threadIndex+1) * grainSize;
-            }
-            printf("ThreadIndex: %d, InsertIndex: %d\n", threadIndex, insertYIndex);
-            MPI_Recv(wholeArray[insertYIndex], maximumAmount,
-                     MPI_DOUBLE, threadIndex, threadIndex, MPI_COMM_WORLD,
-                     &stat);
-        }
+        receiveFromAll(grainSize, sizeOfRow, numberOfThreads, remainder, nproc,
+                       &wholeArray);
     }
     else
     {
@@ -267,6 +205,11 @@ void printVisibleArea(double **array, int numberOfVisibleRows, int sizeOfRow)
     }
     printf("\n");
 }
+
+/* A two dimensional array can be expressed by one dimensional malloc whose size
+is squared.
+To enable two dimensional access, simply malloc pointers to each row index.
+*/
 double **createArrayOfDoubles(int numberOfRows, int sizeOfRow)
 {
     int rowIndex;
@@ -279,6 +222,8 @@ double **createArrayOfDoubles(int numberOfRows, int sizeOfRow)
     }
     return rowPointers;
 }
+
+/* Fills each boundary index with 1.0*/
 void populateBoundaryValues(double **array, int sizeOfRow,
                             int firstVisisbleYIndex,
                             int lastVisibleYIndex, int numberOfVisibleRows)
@@ -305,6 +250,9 @@ void populateBoundaryValues(double **array, int sizeOfRow,
         }
     }
 }
+
+/*Returns the number of rows that a thread will produce results for,
+i.e. the grain.*/
 int getGrainSize(int sizeOfRow, int numberOfThreads, int myRank)
 {
     int grainSize = 0, numberOfViableRows = sizeOfRow - 2,
@@ -323,4 +271,74 @@ int getGrainSize(int sizeOfRow, int numberOfThreads, int myRank)
         grainSize = numberOfViableRows / numberOfThreads;
     }
     return grainSize;
+}
+void receiveFromAll(int grainSize, int sizeOfRow, int numberOfThreads,
+                    int remainder, int nproc, double ***wholeArray)
+{
+    MPI_Status stat;
+    /*Noting that MPI_Recv asks for a number of items to receive.
+        Importantly it specifies the *maximum* number of items. As such each, if
+        carefully programmed so that no other send uses the same tag I can 
+        use a larger than actual maximum count here to encapsulate every
+        receive from every thread. No data will overlap as each send is careful
+        with what data it sends and how much.
+        */
+    int threadIndex,
+        maximumAmount = (grainSize + 1) * sizeOfRow,
+        insertYIndex,
+        //offsetGrainSize is needed due to trying to allow less
+        //compute being passed to thread 0.
+        offsetGrainSize = (sizeOfRow - 2 - remainder) / numberOfThreads;
+    printf("reaminder %d\n", remainder);
+    for (threadIndex = 1; threadIndex < nproc; threadIndex++)
+    {
+        if (remainder)
+        {
+            if ((remainder - threadIndex) > -1)
+            {
+                insertYIndex = threadIndex * (offsetGrainSize + 1);
+            }
+            else
+            {
+                insertYIndex = threadIndex * offsetGrainSize +
+                               1 + remainder;
+            }
+        }
+        else
+        {
+            insertYIndex = (threadIndex + 1) * grainSize;
+        }
+        printf("ThreadIndex: %d, InsertIndex: %d\n", threadIndex, insertYIndex);
+        MPI_Recv((*wholeArray)[insertYIndex], maximumAmount,
+                 MPI_DOUBLE, threadIndex, threadIndex, MPI_COMM_WORLD,
+                 &stat);
+    }
+}
+
+void setStartAndEndYIndex(int *firstVisibleYIndex, int *lastVisibleYIndex,
+                          int remainder, int myRank, int grainSize)
+{
+    if (remainder)
+    {
+        if (myRank > remainder)
+        {
+            *firstVisibleYIndex = myRank * grainSize + remainder;
+            *lastVisibleYIndex = *firstVisibleYIndex + grainSize + 1;
+        }
+        else if (myRank == 0)
+        {
+            *firstVisibleYIndex = myRank * grainSize;
+            *lastVisibleYIndex = *firstVisibleYIndex + grainSize + 1;
+        }
+        else
+        {
+            *firstVisibleYIndex = myRank * grainSize - 1;
+            *lastVisibleYIndex = *firstVisibleYIndex + grainSize + 1;
+        }
+    }
+    else
+    {
+        *firstVisibleYIndex = myRank * grainSize;
+        *lastVisibleYIndex = *firstVisibleYIndex + grainSize + 1;
+    }
 }
