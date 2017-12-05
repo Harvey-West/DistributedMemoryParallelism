@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <mpi.h>
 #include <math.h>
+#include <time.h>
 //TODO
 /*
     1)  Get one pass then send back to 0 working.
@@ -44,7 +45,8 @@ int main(int argc, char **argv)
         countOfPasses = 0,
         rc, myRank, numberOfThreads,
         globalIsRelaxed = 0, localIsRelaxed = 1;
-    double userPrecision;
+    double userPrecision, timeSpent;
+    struct timespec startTime, endTime;
     sscanf(argv[2], "%lf", &userPrecision);
 
     rc = MPI_Init(&argc, &argv);
@@ -85,6 +87,7 @@ int main(int argc, char **argv)
 
     if (myRank == lastThreadRank)
     {
+        clock_gettime(CLOCK_MONOTONIC, &startTime);
         wholeArray = createArrayOfDoubles(sizeOfRow, sizeOfRow);
         populateBoundaryValues(wholeArray, sizeOfRow, 0, sizeOfRow);
     }
@@ -96,9 +99,7 @@ int main(int argc, char **argv)
     localRelaxactionVariables.originalArrayPointer = workingArray;
     localRelaxactionVariables.destinationArrayPointer = destinationArray;
 
-    printf("hello world from ’%d’, grainSize = %d, startY = %d\n", myRank, localGrainSize, firstVisibleYIndex);
-    MPI_Barrier(MPI_COMM_WORLD);
-    //while(globalIsRelaxed)
+
     while (!globalIsRelaxed)
     {
         localIsRelaxed = performRelaxation(localRelaxactionVariables);
@@ -130,20 +131,20 @@ int main(int argc, char **argv)
             int tagOffset = (numberOfThreads + 1);
             if (myRank == 0)
             {
-                MPI_Send(localRelaxactionVariables.originalArrayPointer
+                MPI_Isend(localRelaxactionVariables.originalArrayPointer
                              [localGrainSize],
                          sizeOfRow, MPI_DOUBLE, myRank + 1,
-                         tagOffset + firstVisibleYIndex + localGrainSize, MPI_COMM_WORLD);
+                         tagOffset + firstVisibleYIndex + localGrainSize, MPI_COMM_WORLD, &stat);
                 MPI_Recv(localRelaxactionVariables.originalArrayPointer
                              [numberOfVisibleRows - 1],
                          sizeOfRow, MPI_DOUBLE, myRank + 1,
                          tagOffset + firstVisibleYIndex + numberOfVisibleRows - 1, MPI_COMM_WORLD, &stat);
             }
-            else if (myRank == numberOfThreads - 1)
+            else if (myRank == lastThreadRank)
             {
-                MPI_Send(localRelaxactionVariables.originalArrayPointer[1],
+                MPI_Isend(localRelaxactionVariables.originalArrayPointer[1],
                          sizeOfRow, MPI_DOUBLE, myRank - 1,
-                         tagOffset + firstVisibleYIndex + 1, MPI_COMM_WORLD);
+                         tagOffset + firstVisibleYIndex + 1, MPI_COMM_WORLD, &stat);
                 MPI_Recv(localRelaxactionVariables.originalArrayPointer[0],
                          sizeOfRow, MPI_DOUBLE, myRank - 1,
                          tagOffset + firstVisibleYIndex, MPI_COMM_WORLD, &stat);
@@ -151,13 +152,13 @@ int main(int argc, char **argv)
             else
             {
 
-                MPI_Send(localRelaxactionVariables.originalArrayPointer[1],
+                MPI_Isend(localRelaxactionVariables.originalArrayPointer[1],
                          sizeOfRow, MPI_DOUBLE, myRank - 1,
-                         tagOffset + firstVisibleYIndex + 1, MPI_COMM_WORLD);
-                MPI_Send(localRelaxactionVariables.originalArrayPointer
+                         tagOffset + firstVisibleYIndex + 1, MPI_COMM_WORLD, &stat);
+                MPI_Isend(localRelaxactionVariables.originalArrayPointer
                              [localGrainSize],
                          sizeOfRow, MPI_DOUBLE, myRank + 1,
-                         tagOffset + firstVisibleYIndex + localGrainSize, MPI_COMM_WORLD);
+                         tagOffset + firstVisibleYIndex + localGrainSize, MPI_COMM_WORLD, &stat);
                 MPI_Recv(localRelaxactionVariables.originalArrayPointer
                              [numberOfVisibleRows - 1],
                          sizeOfRow, MPI_DOUBLE, myRank + 1,
@@ -187,14 +188,16 @@ int main(int argc, char **argv)
                  localGrainSize * sizeOfRow, MPI_DOUBLE, lastThreadRank,
                  myRank, MPI_COMM_WORLD);
     }
-    MPI_Barrier(MPI_COMM_WORLD);
     /* implicit barrier in Finalize */
     /*MPI_Barrier(MPI_COMM_WORLD);*/
     MPI_Finalize();
     if (myRank == lastThreadRank)
     {
-        printf("Number of passes: %d\n", countOfPasses);
-        printArray(wholeArray, sizeOfRow);
+        clock_gettime(CLOCK_MONOTONIC, &endTime);
+        timeSpent = endTime.tv_sec - startTime.tv_sec;
+        timeSpent += (endTime.tv_nsec - startTime.tv_nsec) / 1000000000.0;
+        printf("\nNumber of passes: %d, TimeSpent: %f\n", countOfPasses);
+        // printArray(wholeArray, sizeOfRow);
         // printGrain(workingArray, myRank, grainSize, sizeOfRow, numberOfThreads);
         // printVisibleArea(workingArray, numberOfVisibleRows, sizeOfRow);
     }
