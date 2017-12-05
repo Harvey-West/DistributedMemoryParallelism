@@ -58,7 +58,8 @@ int main(int argc, char **argv)
     MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
     MPI_Comm_size(MPI_COMM_WORLD, &numberOfThreads);
     remainder = (sizeOfRow - 2) % numberOfThreads;
-    int threadIndex, threadGrainAndFirstVisibleYIndexArray[numberOfThreads][2];
+    int threadIndex, lastThreadRank = numberOfThreads - 1,
+                     threadGrainAndFirstVisibleYIndexArray[numberOfThreads][2];
     for (threadIndex = 0; threadIndex < numberOfThreads; threadIndex++)
     {
         threadGrainAndFirstVisibleYIndexArray[threadIndex][0] =
@@ -82,7 +83,7 @@ int main(int argc, char **argv)
     populateBoundaryValues(destinationArray, sizeOfRow, firstVisibleYIndex,
                            numberOfVisibleRows);
 
-    if (myRank == 0)
+    if (myRank == lastThreadRank)
     {
         wholeArray = createArrayOfDoubles(sizeOfRow, sizeOfRow);
         populateBoundaryValues(wholeArray, sizeOfRow, 0, sizeOfRow);
@@ -95,6 +96,8 @@ int main(int argc, char **argv)
     localRelaxactionVariables.originalArrayPointer = workingArray;
     localRelaxactionVariables.destinationArrayPointer = destinationArray;
 
+    printf("hello world from ’%d’, grainSize = %d, startY = %d\n", myRank, localGrainSize, firstVisibleYIndex);
+    MPI_Barrier(MPI_COMM_WORLD);
     //while(globalIsRelaxed)
     while (!globalIsRelaxed)
     {
@@ -104,45 +107,76 @@ int main(int argc, char **argv)
             localRelaxactionVariables.destinationArrayPointer;
         localRelaxactionVariables.destinationArrayPointer = tempPointer;
         countOfPasses++;
-        if (myRank)
+        if (myRank < lastThreadRank)
         {
-            MPI_Send(&localIsRelaxed, 1, MPI_INT, 0, 555, MPI_COMM_WORLD);
+            MPI_Send(&localIsRelaxed, 1, MPI_INT, lastThreadRank, numberOfThreads, MPI_COMM_WORLD);
         }
         else
         {
             globalIsRelaxed = localIsRelaxed;
-            for (threadIndex = 1; threadIndex < numberOfThreads; threadIndex++)
+            for (threadIndex = 0; threadIndex < lastThreadRank; threadIndex++)
             {
-                MPI_Recv(&localIsRelaxed, 1, MPI_INT, threadIndex, 555,
-                         MPI_COMM_WORLD, &stat);
-                if (localIsRelaxed == 1)
+                MPI_Recv(&localIsRelaxed, 1, MPI_INT, threadIndex,
+                         numberOfThreads, MPI_COMM_WORLD, &stat);
+                if (localIsRelaxed == 0)
                 {
-                    globalIsRelaxed = 1;
+                    globalIsRelaxed = 0;
                 }
             }
         }
-        MPI_Bcast(&globalIsRelaxed, 1, MPI_INT, 0, MPI_COMM_WORLD);
-        if(!globalIsRelaxed)
+        MPI_Bcast(&globalIsRelaxed, 1, MPI_INT, lastThreadRank, MPI_COMM_WORLD);
+        if (!globalIsRelaxed && numberOfThreads > 1)
         {
-            //Send to nearest neighbour grain index 0 and grainsize +1;
+            int tagOffset = (numberOfThreads + 1);
+            if (myRank == 0)
+            {
+                MPI_Send(localRelaxactionVariables.originalArrayPointer
+                             [localGrainSize],
+                         sizeOfRow, MPI_DOUBLE, myRank + 1,
+                         tagOffset + firstVisibleYIndex + localGrainSize, MPI_COMM_WORLD);
+                MPI_Recv(localRelaxactionVariables.originalArrayPointer
+                             [numberOfVisibleRows - 1],
+                         sizeOfRow, MPI_DOUBLE, myRank + 1,
+                         tagOffset + firstVisibleYIndex + numberOfVisibleRows - 1, MPI_COMM_WORLD, &stat);
+            }
+            else if (myRank == numberOfThreads - 1)
+            {
+                MPI_Send(localRelaxactionVariables.originalArrayPointer[1],
+                         sizeOfRow, MPI_DOUBLE, myRank - 1,
+                         tagOffset + firstVisibleYIndex + 1, MPI_COMM_WORLD);
+                MPI_Recv(localRelaxactionVariables.originalArrayPointer[0],
+                         sizeOfRow, MPI_DOUBLE, myRank - 1,
+                         tagOffset + firstVisibleYIndex, MPI_COMM_WORLD, &stat);
+            }
+            else
+            {
+
+                MPI_Send(localRelaxactionVariables.originalArrayPointer[1],
+                         sizeOfRow, MPI_DOUBLE, myRank - 1,
+                         tagOffset + firstVisibleYIndex + 1, MPI_COMM_WORLD);
+                MPI_Send(localRelaxactionVariables.originalArrayPointer
+                             [localGrainSize],
+                         sizeOfRow, MPI_DOUBLE, myRank + 1,
+                         tagOffset + firstVisibleYIndex + localGrainSize, MPI_COMM_WORLD);
+                MPI_Recv(localRelaxactionVariables.originalArrayPointer
+                             [numberOfVisibleRows - 1],
+                         sizeOfRow, MPI_DOUBLE, myRank + 1,
+                         tagOffset + firstVisibleYIndex + numberOfVisibleRows - 1, MPI_COMM_WORLD, &stat);
+                MPI_Recv(localRelaxactionVariables.originalArrayPointer[0],
+                         sizeOfRow, MPI_DOUBLE, myRank - 1,
+                         tagOffset + firstVisibleYIndex, MPI_COMM_WORLD, &stat);
+            }
         }
     }
 
-    printf("hello world from ’%d’, grainSize = %d, startY = %d\n", myRank, localGrainSize, firstVisibleYIndex);
-    MPI_Barrier(MPI_COMM_WORLD);
-
-    if (myRank == 0)
+    if (myRank == lastThreadRank)
     {
-        //In some cases where the offset of trying to prevent thread 0 from
-        //getting too much work, it may have no grain to work on.
-        if (localGrainSize > 0)
+
+        int x;
+        for (x = 0; x < sizeOfRow * localGrainSize; x++)
         {
-            int x;
-            for (x = 0; x < sizeOfRow * localGrainSize; x++)
-            {
-                *(wholeArray[1] + x) =
-                    *(localRelaxactionVariables.originalArrayPointer[1] + x);
-            }
+            *(wholeArray[firstVisibleYIndex + 1] + x) =
+                *(localRelaxactionVariables.originalArrayPointer[1] + x);
         }
         receiveFromAll(sizeOfRow, numberOfThreads, &wholeArray,
                        &threadGrainAndFirstVisibleYIndexArray);
@@ -150,16 +184,16 @@ int main(int argc, char **argv)
     else
     {
         MPI_Send(localRelaxactionVariables.originalArrayPointer[1],
-                 localGrainSize * sizeOfRow, MPI_DOUBLE, 0,
+                 localGrainSize * sizeOfRow, MPI_DOUBLE, lastThreadRank,
                  myRank, MPI_COMM_WORLD);
     }
     MPI_Barrier(MPI_COMM_WORLD);
-
     /* implicit barrier in Finalize */
     /*MPI_Barrier(MPI_COMM_WORLD);*/
     MPI_Finalize();
-    if (myRank == 0)
+    if (myRank == lastThreadRank)
     {
+        printf("Number of passes: %d\n", countOfPasses);
         printArray(wholeArray, sizeOfRow);
         // printGrain(workingArray, myRank, grainSize, sizeOfRow, numberOfThreads);
         // printVisibleArea(workingArray, numberOfVisibleRows, sizeOfRow);
@@ -300,8 +334,7 @@ int getGrainSize(int sizeOfRow, int numberOfThreads, int myRank)
     if (remaining)
     {
         grainSize = (numberOfViableRows - remaining) / numberOfThreads;
-        //Spreads work across threads, aside from 0 as 0 does more other work.
-        if ((remaining - myRank) > -1 && myRank)
+        if ((remaining - myRank) > 0)
         {
             grainSize += 1;
         }
@@ -324,13 +357,14 @@ void receiveFromAll(int sizeOfRow, int numberOfThreads, double ***wholeArray,
         with what data it sends and how much.
         */
     int threadIndex,
-        maximumAmount = (threadGrainAndFirstVisibleYIndexArray[1][0] + 1) *
+        maximumAmount = (threadGrainAndFirstVisibleYIndexArray
+                             [numberOfThreads - 1][0] +
+                         1) *
                         sizeOfRow,
         insertYIndex;
-    for (threadIndex = 1; threadIndex < numberOfThreads; threadIndex++)
+    for (threadIndex = 0; threadIndex < numberOfThreads - 1; threadIndex++)
     {
         insertYIndex = threadGrainAndFirstVisibleYIndexArray[threadIndex][1] + 1;
-        printf("ThreadIndex: %d, InsertIndex: %d\n", threadIndex, insertYIndex);
         MPI_Recv((*wholeArray)[insertYIndex], maximumAmount,
                  MPI_DOUBLE, threadIndex, threadIndex, MPI_COMM_WORLD,
                  &stat);
@@ -342,17 +376,13 @@ int getFirstVisibleYIndex(int remainder, int myRank, int grainSize)
     int firstVisibleYIndex = 0;
     if (remainder)
     {
-        if (myRank > remainder)
+        if (myRank >= remainder)
         {
             firstVisibleYIndex = myRank * grainSize + remainder;
         }
-        else if (myRank == 0)
-        {
-            firstVisibleYIndex = myRank * grainSize;
-        }
         else
         {
-            firstVisibleYIndex = myRank * grainSize - 1;
+            firstVisibleYIndex = myRank * grainSize;
         }
     }
     else
