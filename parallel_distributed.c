@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <mpi.h>
+#include <math.h>
 //TODO
 /*
     1)  Get one pass then send back to 0 working.
@@ -27,7 +28,7 @@ double **createArrayOfDoubles(int numberOfRows, int sizeOfRow);
 void populateBoundaryValues(double **array, int sizeOfRow, int startYIndex,
                             int numberOfVisibleRows);
 int getGrainSize(int sizeOfRow, int numberOfThreads, int myRank);
-void performRelaxation(struct RelaxationVariables);
+int performRelaxation(struct RelaxationVariables);
 void printArray(double **array, int sizeOfRow);
 void printGrain(double **array, int offset, int grainSize, int sizeOfRow,
                 int numberOfThreads);
@@ -41,7 +42,8 @@ int main(int argc, char **argv)
         localGrainSize,
         remainder,
         countOfPasses = 0,
-        rc, myRank, numberOfThreads;
+        rc, myRank, numberOfThreads,
+        globalIsRelaxed = 0, localIsRelaxed = 1;
     double userPrecision;
     sscanf(argv[2], "%lf", &userPrecision);
 
@@ -93,15 +95,39 @@ int main(int argc, char **argv)
     localRelaxactionVariables.originalArrayPointer = workingArray;
     localRelaxactionVariables.destinationArrayPointer = destinationArray;
 
-    while (countOfPasses == 0)
+    //while(globalIsRelaxed)
+    while (!globalIsRelaxed)
     {
-        performRelaxation(localRelaxactionVariables);
+        localIsRelaxed = performRelaxation(localRelaxactionVariables);
         tempPointer = localRelaxactionVariables.originalArrayPointer;
         localRelaxactionVariables.originalArrayPointer =
             localRelaxactionVariables.destinationArrayPointer;
         localRelaxactionVariables.destinationArrayPointer = tempPointer;
         countOfPasses++;
+        if (myRank)
+        {
+            MPI_Send(&localIsRelaxed, 1, MPI_INT, 0, 555, MPI_COMM_WORLD);
+        }
+        else
+        {
+            globalIsRelaxed = localIsRelaxed;
+            for (threadIndex = 1; threadIndex < numberOfThreads; threadIndex++)
+            {
+                MPI_Recv(&localIsRelaxed, 1, MPI_INT, threadIndex, 555,
+                         MPI_COMM_WORLD, &stat);
+                if (localIsRelaxed == 1)
+                {
+                    globalIsRelaxed = 1;
+                }
+            }
+        }
+        MPI_Bcast(&globalIsRelaxed, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        if(!globalIsRelaxed)
+        {
+            //Send to nearest neighbour grain index 0 and grainsize +1;
+        }
     }
+
     printf("hello world from ’%d’, grainSize = %d, startY = %d\n", myRank, localGrainSize, firstVisibleYIndex);
     MPI_Barrier(MPI_COMM_WORLD);
 
@@ -140,7 +166,7 @@ int main(int argc, char **argv)
     }
     return 0;
 }
-void performRelaxation(struct RelaxationVariables localVariables)
+int performRelaxation(struct RelaxationVariables localVariables)
 {
     double **originalArray = localVariables.originalArrayPointer,
            **destinationArray = localVariables.destinationArrayPointer,
@@ -150,8 +176,9 @@ void performRelaxation(struct RelaxationVariables localVariables)
         grainSize = localVariables.grainSize,
         boundaryXValueIndex = sizeOfRow - 1,
         yIndex, xIndex,
-        upperY, lowerY;
-
+        upperY, lowerY,
+        isRelaxed = 1;
+    MPI_Status stat;
     for (yIndex = 1; yIndex <= grainSize; yIndex++)
     {
         upperY = yIndex + 1;
@@ -163,9 +190,17 @@ void performRelaxation(struct RelaxationVariables localVariables)
                       originalArray[yIndex][xIndex + 1] +
                       originalArray[yIndex][xIndex - 1]) /
                      4.0;
+            if (isRelaxed)
+            {
+                if (fabs(result - originalArray[yIndex][xIndex]) > precision)
+                {
+                    isRelaxed = 0;
+                }
+            }
             destinationArray[yIndex][xIndex] = result;
         }
     }
+    return isRelaxed;
 }
 void printArray(double **array, int sizeOfRow)
 {
