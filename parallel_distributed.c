@@ -176,7 +176,10 @@ int main(int argc, char **argv)
         }
         //If any of the threads say it is not relaxed, broadcast to all that
         //process of relaxing has to be repeated.
-        MPI_Bcast(&globalIsRelaxed, 1, MPI_INT, lastThreadRank, MPI_COMM_WORLD);
+        if (numberOfThreads > 1)
+        {
+            MPI_Bcast(&globalIsRelaxed, 1, MPI_INT, lastThreadRank, MPI_COMM_WORLD);
+        }
 
         /*
         If not relaxed, and more than one thread, then send and receive edge
@@ -250,26 +253,40 @@ int main(int argc, char **argv)
 
     //If local thread is the pseudo main, receive all of the results from
     //other threads and collate them.
-    if (myRank == lastThreadRank)
+    if (numberOfThreads > 1)
     {
-
+        if (myRank == lastThreadRank)
+        {
+            int x;
+            for (x = 0; x < sizeOfRow * localGrainSize; x++)
+            {
+                *(wholeArray[firstVisibleYIndex + 1] + x) =
+                    *(localRelaxactionVariables.originalArrayPointer[1] + x);
+            }
+            receiveFromAll(sizeOfRow, numberOfThreads, &wholeArray,
+                           (int(*)[2]) & threadGrainAndFirstVisibleYIndexArray);
+        }
+        else
+        {
+            MPI_Send(localRelaxactionVariables.originalArrayPointer[1],
+                     localGrainSize * sizeOfRow, MPI_DOUBLE, lastThreadRank,
+                     myRank, MPI_COMM_WORLD);
+        }
+    }
+    else
+    {
         int x;
         for (x = 0; x < sizeOfRow * localGrainSize; x++)
         {
             *(wholeArray[firstVisibleYIndex + 1] + x) =
                 *(localRelaxactionVariables.originalArrayPointer[1] + x);
         }
-        receiveFromAll(sizeOfRow, numberOfThreads, &wholeArray,
-                       (int(*)[2]) & threadGrainAndFirstVisibleYIndexArray);
-    }
-    else
-    {
-        MPI_Send(localRelaxactionVariables.originalArrayPointer[1],
-                 localGrainSize * sizeOfRow, MPI_DOUBLE, lastThreadRank,
-                 myRank, MPI_COMM_WORLD);
     }
 
-    MPI_Finalize();
+    if (numberOfThreads > 1)
+    {
+        MPI_Finalize();
+    }
     //Ensure all messages are sent and that the pseudo main thread has received
     //all results
     if (myRank == lastThreadRank)
@@ -453,7 +470,9 @@ void receiveFromAll(int sizeOfRow, int numberOfThreads, double ***wholeArray,
         insertYIndex;
     for (threadIndex = 0; threadIndex < numberOfThreads - 1; threadIndex++)
     {
-        insertYIndex = threadGrainAndFirstVisibleYIndexArray[threadIndex][1] + 1;
+        insertYIndex = threadGrainAndFirstVisibleYIndexArray
+                           [threadIndex][1] +
+                       1;
         MPI_Recv((*wholeArray)[insertYIndex],
                  threadGrainAndFirstVisibleYIndexArray
                          [threadIndex][0] *
