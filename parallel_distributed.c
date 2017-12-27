@@ -294,7 +294,8 @@ int main(int argc, char **argv)
         clock_gettime(CLOCK_MONOTONIC, &endTime);
         timeSpent = endTime.tv_sec - startTime.tv_sec;
         timeSpent += (endTime.tv_nsec - startTime.tv_nsec) / 1000000000.0;
-        printf("\nNumber of passes: %d, TimeSpent: %f\n", countOfPasses, timeSpent);
+        //printf("\nNumber of passes: %d, TimeSpent: %f\n", countOfPasses, timeSpent);
+        printf("%d, %d, %d, %f", sizeOfRow, numberOfThreads, countOfPasses, timeSpent);
         // printArray(wholeArray, sizeOfRow);
         // printGrain(workingArray, myRank, grainSize, sizeOfRow, numberOfThreads);
         // printVisibleArea(workingArray, numberOfVisibleRows, sizeOfRow);
