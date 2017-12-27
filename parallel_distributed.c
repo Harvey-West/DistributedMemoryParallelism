@@ -155,6 +155,7 @@ int main(int argc, char **argv)
             localRelaxactionVariables.destinationArrayPointer;
         localRelaxactionVariables.destinationArrayPointer = tempPointer;
         countOfPasses++;
+        //If not pseudo main, send "if relaxed" to pseudo main.
         if (myRank < lastThreadRank)
         {
             MPI_Send(&localIsRelaxed, 1, MPI_INT, lastThreadRank,
@@ -173,12 +174,27 @@ int main(int argc, char **argv)
                 }
             }
         }
+        //If any of the threads say it is not relaxed, broadcast to all that
+        //process of relaxing has to be repeated.
         MPI_Bcast(&globalIsRelaxed, 1, MPI_INT, lastThreadRank, MPI_COMM_WORLD);
+
+        /*
+        If not relaxed, and more than one thread, then send and receive edge
+        rows to nearest neighbours.
+        
+        A sending edge row is the first and last grain that the local thread
+        worked on.
+
+        A receiving edge row is not within the grain, and was not relaxed
+        in the local thread, but the boundaries around this grain.
+        */
         if (!globalIsRelaxed && numberOfThreads > 1)
         {
             int tagOffset = (numberOfThreads + 1);
             if (myRank == 0)
             {
+                //If thread 0, then there is only one overlapping row. Send the
+                //last grain and receive for the last grain index plus one.
                 MPI_Isend(localRelaxactionVariables.originalArrayPointer
                               [localGrainSize],
                           sizeOfRow, MPI_DOUBLE, myRank + 1,
@@ -193,6 +209,9 @@ int main(int argc, char **argv)
             }
             else if (myRank == lastThreadRank)
             {
+                //If local thread has the greatest thread rank, then send
+                //the first working grain index and receive in the first index
+                //at 0.
                 MPI_Isend(localRelaxactionVariables.originalArrayPointer[1],
                           sizeOfRow, MPI_DOUBLE, myRank - 1,
                           tagOffset + firstVisibleYIndex + 1,
@@ -203,7 +222,7 @@ int main(int argc, char **argv)
             }
             else
             {
-
+                //See above commends, sends edge rows to nearest neighbour.
                 MPI_Isend(localRelaxactionVariables.originalArrayPointer[1],
                           sizeOfRow, MPI_DOUBLE, myRank - 1,
                           tagOffset + firstVisibleYIndex + 1,
@@ -216,7 +235,9 @@ int main(int argc, char **argv)
                 MPI_Recv(localRelaxactionVariables.originalArrayPointer
                              [numberOfVisibleRows - 1],
                          sizeOfRow, MPI_DOUBLE, myRank + 1,
-                         tagOffset + firstVisibleYIndex + numberOfVisibleRows - 1, MPI_COMM_WORLD, &stat);
+                         tagOffset + firstVisibleYIndex +
+                             numberOfVisibleRows - 1,
+                         MPI_COMM_WORLD, &stat);
                 MPI_Recv(localRelaxactionVariables.originalArrayPointer[0],
                          sizeOfRow, MPI_DOUBLE, myRank - 1,
                          tagOffset + firstVisibleYIndex, MPI_COMM_WORLD, &stat);
@@ -224,6 +245,11 @@ int main(int argc, char **argv)
         }
     }
 
+    //While loop has exited, as such relaxation is complete.
+    //Results need to be collected as final stage.
+
+    //If local thread is the pseudo main, receive all of the results from
+    //other threads and collate them.
     if (myRank == lastThreadRank)
     {
 
@@ -242,9 +268,10 @@ int main(int argc, char **argv)
                  localGrainSize * sizeOfRow, MPI_DOUBLE, lastThreadRank,
                  myRank, MPI_COMM_WORLD);
     }
-    /* implicit barrier in Finalize */
-    /*MPI_Barrier(MPI_COMM_WORLD);*/
+
     MPI_Finalize();
+    //Ensure all messages are sent and that the pseudo main thread has received
+    //all results
     if (myRank == lastThreadRank)
     {
         clock_gettime(CLOCK_MONOTONIC, &endTime);
@@ -257,6 +284,13 @@ int main(int argc, char **argv)
     }
     return 0;
 }
+/*
+Given the structure of type RelaxationVariables, take values from one array,
+relax and place them in the destination array. Check if the new value is relaxed
+or not.
+Once relaxation iteration is complete, return if grain is relaxed compared to
+the precision or not.
+*/
 int performRelaxation(struct RelaxationVariables localVariables)
 {
     double **originalArray = localVariables.originalArrayPointer,
@@ -275,6 +309,7 @@ int performRelaxation(struct RelaxationVariables localVariables)
         lowerY = yIndex - 1;
         for (xIndex = 1; xIndex < boundaryXValueIndex; xIndex++)
         {
+            //Get relevant values and divide by 4.0 to relax.
             result = (originalArray[upperY][xIndex] +
                       originalArray[lowerY][xIndex] +
                       originalArray[yIndex][xIndex + 1] +
@@ -282,11 +317,13 @@ int performRelaxation(struct RelaxationVariables localVariables)
                      4.0;
             if (isRelaxed)
             {
+                //Check if result changes more than the precision.
                 if (fabs(result - originalArray[yIndex][xIndex]) > precision)
                 {
                     isRelaxed = 0;
                 }
             }
+            //Populate destination array with results.
             destinationArray[yIndex][xIndex] = result;
         }
     }
@@ -344,7 +381,7 @@ To enable two dimensional access, simply malloc pointers to each row index.
 double **createArrayOfDoubles(int numberOfRows, int sizeOfRow)
 {
     int rowIndex;
-    //Initialise all values to 0
+    //Initialise all values to 0.0
     double *array = calloc(numberOfRows * sizeOfRow, sizeof(double *));
     double **rowPointers = malloc(sizeOfRow * sizeof(double *));
     for (rowIndex = 0; rowIndex < numberOfRows; rowIndex++)
@@ -354,7 +391,8 @@ double **createArrayOfDoubles(int numberOfRows, int sizeOfRow)
     return rowPointers;
 }
 
-/* Fills each boundary index with 1.0*/
+/* Fills each boundary index with 1.0. A fixed value is used to ensure
+accurate comparison between array sizes.*/
 void populateBoundaryValues(double **array, int sizeOfRow,
                             int firstVisisbleYIndex, int numberOfVisibleRows)
 {
@@ -387,6 +425,11 @@ int getGrainSize(int sizeOfRow, int numberOfThreads, int myRank)
 {
     int grainSize = 0, numberOfViableRows = sizeOfRow - 2,
         remaining = numberOfViableRows % numberOfThreads;
+    //If the grain can not be split equally amongst threads, segment the work
+    //between all threads. The maximum remainder can only be numberOfThreads-1.
+    //Due to this effect, the thread with the greatest rank in MPI_COMM_WORLD
+    //will be the "pseudo main" in that they will perform any additional work to
+    //compensate for potentially less work.
     if (remaining)
     {
         grainSize = (numberOfViableRows - remaining) / numberOfThreads;
@@ -401,32 +444,38 @@ int getGrainSize(int sizeOfRow, int numberOfThreads, int myRank)
     }
     return grainSize;
 }
+//Receives results from all other threads and collates them into wholeArray.
 void receiveFromAll(int sizeOfRow, int numberOfThreads, double ***wholeArray,
                     int (*threadGrainAndFirstVisibleYIndexArray)[2])
 {
     MPI_Status stat;
-    /*Noting that MPI_Recv asks for a number of items to receive.
-        Importantly it specifies the *maximum* number of items. As such each, if
-        carefully programmed so that no other send uses the same tag I can 
-        use a larger than actual maximum count here to encapsulate every
-        receive from every thread. No data will overlap as each send is careful
-        with what data it sends and how much.
-        */
     int threadIndex,
-        maximumAmount = (threadGrainAndFirstVisibleYIndexArray
-                             [numberOfThreads - 1][0] +
-                         1) *
-                        sizeOfRow,
         insertYIndex;
     for (threadIndex = 0; threadIndex < numberOfThreads - 1; threadIndex++)
     {
         insertYIndex = threadGrainAndFirstVisibleYIndexArray[threadIndex][1] + 1;
-        MPI_Recv((*wholeArray)[insertYIndex], maximumAmount,
+        MPI_Recv((*wholeArray)[insertYIndex],
+                 threadGrainAndFirstVisibleYIndexArray
+                         [threadIndex][0] *
+                     sizeOfRow,
                  MPI_DOUBLE, threadIndex, threadIndex, MPI_COMM_WORLD,
                  &stat);
     }
 }
 
+/*
+This function returns what Y index, from a global view of the whole array, that
+a thread will see. Each thread will be working on some number of rows:
+
+1.0, 1.0, 1.0
+0.0, 0.0, 0.0
+1.0, 1.0, 1.0
+
+In this case if the grain size is 1, i.e. it is only going to relax the second
+row of 0.0. It will need to see the row preceding it, the first 1.0 row.
+This function returns what Y index the first 1.0 row would have if it was taken
+from the entire result array.
+*/
 int getFirstVisibleYIndex(int remainder, int myRank, int grainSize)
 {
     int firstVisibleYIndex = 0;
