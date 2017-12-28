@@ -178,9 +178,12 @@ int main(int argc, char **argv)
         //process of relaxing has to be repeated.
         if (numberOfThreads > 1)
         {
-            MPI_Bcast(&globalIsRelaxed, 1, MPI_INT, lastThreadRank, MPI_COMM_WORLD);
+            MPI_Bcast(&globalIsRelaxed, 1, MPI_INT,
+                      lastThreadRank, MPI_COMM_WORLD);
         }
 
+        //Ensure every thread has received the broadcast
+        MPI_Barrier(MPI_COMM_WORLD);
         /*
         If not relaxed, and more than one thread, then send and receive edge
         rows to nearest neighbours.
@@ -283,10 +286,6 @@ int main(int argc, char **argv)
         }
     }
 
-    if (numberOfThreads > 1)
-    {
-        MPI_Finalize();
-    }
     //Ensure all messages are sent and that the pseudo main thread has received
     //all results
     if (myRank == lastThreadRank)
@@ -295,10 +294,14 @@ int main(int argc, char **argv)
         timeSpent = endTime.tv_sec - startTime.tv_sec;
         timeSpent += (endTime.tv_nsec - startTime.tv_nsec) / 1000000000.0;
         //printf("\nNumber of passes: %d, TimeSpent: %f\n", countOfPasses, timeSpent);
-        printf("%d, %d, %d, %f", sizeOfRow, numberOfThreads, countOfPasses, timeSpent);
+        printf("%d, %d, %d, %f\n\n", sizeOfRow, numberOfThreads, countOfPasses, timeSpent);
         // printArray(wholeArray, sizeOfRow);
         // printGrain(workingArray, myRank, grainSize, sizeOfRow, numberOfThreads);
         // printVisibleArea(workingArray, numberOfVisibleRows, sizeOfRow);
+    }
+    if (numberOfThreads > 1)
+    {
+        MPI_Finalize();
     }
     return 0;
 }
