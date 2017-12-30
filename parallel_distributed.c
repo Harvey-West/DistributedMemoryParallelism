@@ -77,13 +77,17 @@ int main(int argc, char **argv)
         relax rows 1,2,3,4.
         Additionally, thread 0 needs to see their last grain row index + 1 to 
         calculate row 4. This corresponds to the first row that thread 1 works
-        on, 5.
+        on, global index 5.
 
         Thread 1 must be able to see the last row that thread 0 works on, i.e.
-        the first visible Y from the full array that thread 1 sees is 4.
-        Thread 1 will need to see 4, to work on row indexes 5,6,7,8.
+        the first visible Y from the full array that thread 1 sees. This
+        corresponds to thread index in the full array of 4.
+        Thread 1 will need to see 4, to work on row indexes 5.
         Thread 1 will also need to see the final boundary row 9, however will
-        not work on this row as it never changes.
+        not work on this row as it never changes like row 0, to calculate
+        global row index 8. This is not included in the array as it is just:
+
+            First visible Y + local grain size + 1
 
         The resultant array for this example would be:
 
@@ -92,6 +96,13 @@ int main(int argc, char **argv)
 
         Array[1][0] - Grain Size for Thread 1 = 4
         Array[1][1] - First Visible Y index for Thread 1 = 4
+
+        Justification for this is it makes it easier to:
+            - each thread to swap boundary values
+            - final reduction step to know where to insert
+                rows into the final result array.
+            - when generating local array, know if there are boundary values
+                to generate.
     */
     int threadGrainAndFirstVisibleYIndexArray[numberOfThreads][2];
 
@@ -111,10 +122,17 @@ int main(int argc, char **argv)
     int firstVisibleYIndex = threadGrainAndFirstVisibleYIndexArray[myRank][1],
         //As outlined above, the number of total visible rows will be the grain
         //size plus one for the row above and plus one additional one for the
-        //row belowthe grain.
+        //row past the final grain index.
         numberOfVisibleRows = localGrainSize + 2;
 
-    double **workingArray, **destinationArray, **wholeArray, **tempPointer;
+    double **workingArray, **destinationArray, //These arrays are for performing
+    //the relaxation.
+     **wholeArray,//End result will be put into the "wholeArray" on whichever
+     //core calls createArrayOfDoubles on this variable. 
+     **tempPointer//Used to swap pointers in the structure passed to function
+     //which relaxes values from one array and puts result into the other. Means
+     //that malloc only needs to be called once.
+     ;
 
     //These arrays are malloced once with values taken from one and results
     //put into the other.
@@ -196,6 +214,14 @@ int main(int argc, char **argv)
         */
         if (!globalIsRelaxed && numberOfThreads > 1)
         {
+            /*
+                Non blocking send and blocking receive ensures that there is
+                no halting problem where two cores are waiting for the other to
+                send before sending themselves. Only works if the receive is
+                blocking because a blocking send and non blocking receive 
+                could mean that the data is not received before another
+                iteration of performRelaxation occurs. 
+            */
             int tagOffset = (numberOfThreads + 1);
             if (myRank == 0)
             {
@@ -324,8 +350,11 @@ int performRelaxation(struct RelaxationVariables localVariables)
         yIndex, xIndex,
         upperY, lowerY,
         isRelaxed = 1;
+
     for (yIndex = 1; yIndex <= grainSize; yIndex++)
     {
+        //Minor optimisation means these two values are calculated fewer times
+        //than if they were included in the following for loop.
         upperY = yIndex + 1;
         lowerY = yIndex - 1;
         for (xIndex = 1; xIndex < boundaryXValueIndex; xIndex++)
@@ -336,6 +365,15 @@ int performRelaxation(struct RelaxationVariables localVariables)
                       originalArray[yIndex][xIndex + 1] +
                       originalArray[yIndex][xIndex - 1]) /
                      4.0;
+            //Optimisation that means calculating if relaxed may not need to
+            //occur. In the worst case every value needs to both check
+            //isRelaxed and then calculate if it is relaxed. However the cost
+            //is less than always calculating and never checking if already
+            //found a value that is relaxed.
+            //Furthermore spreading this computation amongst cores improved
+            //speedup, rather than collecting and having one core calculate
+            //if the entire array was relaxed. More CPUs spent time idle and
+            //the program was slower, this method alleviates that issue.
             if (isRelaxed)
             {
                 //Check if result changes more than the precision.
@@ -348,6 +386,8 @@ int performRelaxation(struct RelaxationVariables localVariables)
             destinationArray[yIndex][xIndex] = result;
         }
     }
+    //Return if local grain is relaxed or not. The result values are already
+    //assigned via use of the pointers.
     return isRelaxed;
 }
 void printArray(double **array, int sizeOfRow)
@@ -371,7 +411,6 @@ void printGrain(double **array, int myRank, int grainSize, int sizeOfRow,
         lastVisibleYIndex = grainSize + 1;
     for (y = 1; y < lastVisibleYIndex; y++)
     {
-        printf("Y = %d  ,", myRank * grainSize + y);
         for (x = 0; x < sizeOfRow; x++)
         {
             printf("%f,", array[y][x]);
@@ -398,6 +437,8 @@ void printVisibleArea(double **array, int numberOfVisibleRows, int sizeOfRow)
 /* A two dimensional array can be expressed by one dimensional malloc whose size
 is squared.
 To enable two dimensional access, simply malloc pointers to each row index.
+Two dimensional access is useful because it reduces the required computations
+to determine if the value at an index is a boundary or not.
 */
 double **createArrayOfDoubles(int numberOfRows, int sizeOfRow)
 {
